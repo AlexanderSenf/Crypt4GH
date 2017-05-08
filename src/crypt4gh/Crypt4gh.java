@@ -64,7 +64,7 @@ import org.apache.commons.io.IOUtils;
 public class Crypt4gh {
 
     // 'crypt4gh' version 1
-    public static byte[] MagicNumber = new byte[] {63, 72, 79, 70, 74, 34, 67, 68};
+    public static byte[] MagicNumber = new byte[] {99, 114, 121, 112, 116, 52, 103, 104};
     public static byte[] Version = new byte[] {1, 0, 0, 0};
     
     /**

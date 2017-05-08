@@ -119,25 +119,23 @@ public class EncryptionParameters {
     private byte[] intToByteArray(int a)
     {
         ByteBuffer dbuf = ByteBuffer.allocate(4);
-        dbuf.putInt(a).order(java.nio.ByteOrder.LITTLE_ENDIAN);
-        return dbuf.array();
+        dbuf.order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(a);
+        return dbuf.order(java.nio.ByteOrder.LITTLE_ENDIAN).array();
     }
 
     // Convert 64 Bit Long to Byte Array
     private byte[] longToByteArray(long a)
     {
         ByteBuffer dbuf = ByteBuffer.allocate(8);
-        dbuf.putLong(a).order(java.nio.ByteOrder.LITTLE_ENDIAN);
-        return dbuf.array();
+        dbuf.order(java.nio.ByteOrder.LITTLE_ENDIAN).putLong(a);
+        return dbuf.order(java.nio.ByteOrder.LITTLE_ENDIAN).array();
     }
 
     private int getLittleEndianInt(byte[] bytes) {
-        return java.nio.ByteBuffer.wrap(bytes).getInt();
-        //return java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt();
+        return java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt();
     }
     
     private long getLittleEndianLong(byte[] bytes) {
-        return java.nio.ByteBuffer.wrap(bytes).getLong();
-        //return java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).getLong();
+        return java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).getLong();
     }
 }

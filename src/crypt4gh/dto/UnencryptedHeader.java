@@ -44,8 +44,8 @@ public class UnencryptedHeader implements Serializable {
         this.magicNumber = Arrays.copyOf(magicNumber, 8);
         this.version = Arrays.copyOf(version, 4);
         ByteBuffer dbuf = ByteBuffer.allocate(4);
-        dbuf.putInt(encryptedHeaderLength);
-        this.encryptedHeaderLength = dbuf.array();        
+        dbuf.order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(encryptedHeaderLength);
+        this.encryptedHeaderLength = dbuf.order(java.nio.ByteOrder.LITTLE_ENDIAN).array();        
     }
 
     public UnencryptedHeader(ByteBuffer bb) {
@@ -87,8 +87,7 @@ public class UnencryptedHeader implements Serializable {
      * - Convert byte[4] to integer; big/little endian methods
      */
     private int getLittleEndian(byte[] bytes) {
-        return java.nio.ByteBuffer.wrap(bytes).getInt();
-        //return java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt();
+        return java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt();
     }
     
     private int getBigEndian(byte[] bytes) {
