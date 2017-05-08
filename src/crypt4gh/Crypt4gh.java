@@ -161,12 +161,12 @@ public class Crypt4gh {
         
         // Generate Encrypted Header
         EncryptionParameters[] encryptionParameters = new EncryptionParameters[1];
-        encryptionParameters[0] = new EncryptionParameters(0,plainEnd,0,cipherEnd, AES_256_CTR, parms);
+        encryptionParameters[0] = new EncryptionParameters(0,plainEnd,0,0, AES_256_CTR, parms);
         EncryptedHeader encryptedHeader = new EncryptedHeader(encryptionParameters);
         byte[] encryptedHeaderBytes = encryptedHeader.getEncryptedHeader(keyPath, keyPassphrase);
         
         // Generate Unencrypted Header
-        UnencryptedHeader unencryptedHeader = new UnencryptedHeader(MagicNumber, Version, encryptedHeaderBytes.length);
+        UnencryptedHeader unencryptedHeader = new UnencryptedHeader(MagicNumber, Version, encryptedHeaderBytes.length + 16);
         
         // Write Header
         os.write(unencryptedHeader.getHeaderBytes());
@@ -203,7 +203,7 @@ public class Crypt4gh {
         
         // Read unencrypted file Header (validates Magic Number & Version)
         UnencryptedHeader unencryptedHeader = getUnencryptedHeader(in);
-        int encryptedHeaderLength = unencryptedHeader.getEncryptedHeaderLength();
+        int encryptedHeaderLength = unencryptedHeader.getEncryptedHeaderLength() - 16;
         
         // Read unencrypted file Header (decryptes this header with Private GPG Key)
         EncryptedHeader encryptedHeader = getEncryptedHeader(in, keyPath, keyPassphrase, encryptedHeaderLength);
@@ -234,12 +234,6 @@ public class Crypt4gh {
      * Function to read the unencrypted header of an encrypted file
      */
     private static UnencryptedHeader getUnencryptedHeader(InputStream source) throws Exception {
-        //SeekableByteChannel newByteChannel = Files.newByteChannel(source);
-        //ByteBuffer bb = ByteBuffer.allocate(16);
-        //int read = newByteChannel.read(bb);
-        //if (read<16) {
-        //    throw new Exception("File is too short.");
-        //}
         byte[] header = new byte[16];
         source.read(header);
 
@@ -265,10 +259,6 @@ public class Crypt4gh {
      * The Header object deals with decryption and encryption
      */
     private static EncryptedHeader getEncryptedHeader(InputStream source, Path keyPath, String keyPassphrase, int headerLength) throws Exception {
-        //SeekableByteChannel newByteChannel = Files.newByteChannel(source);
-        //ByteBuffer bb = ByteBuffer.allocate(headerLength);
-        //newByteChannel.position(16);
-        //int read = newByteChannel.read(bb);
         byte[] header = new byte[headerLength];
         int read = source.read(header);
         
