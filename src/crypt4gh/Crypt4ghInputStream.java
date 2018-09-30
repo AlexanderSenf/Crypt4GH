@@ -17,23 +17,13 @@ package crypt4gh;
 
 import static crypt4gh.Crypt4gh.MagicNumber;
 import static crypt4gh.Crypt4gh.Version;
-import crypt4gh.dto.EncryptedHeader;
-import crypt4gh.dto.EncryptionParameters;
 import crypt4gh.dto.UnencryptedHeader;
 
 import java.io.IOException;
 import java.io.InputStream;
 
 import java.nio.ByteBuffer;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-
-import java.security.spec.AlgorithmParameterSpec;
-import javax.crypto.Cipher;
 import javax.crypto.CipherInputStream;
-import javax.crypto.SecretKey;
-import javax.crypto.spec.IvParameterSpec;
-import javax.crypto.spec.SecretKeySpec;
 
 /**
  *
@@ -50,20 +40,20 @@ public class Crypt4ghInputStream extends InputStream {
         int encryptedHeaderLength = unencryptedHeader.getEncryptedHeaderLength() - 16;
         
         // Read unencrypted file Header (decryptes this header with Private GPG Key)
-        EncryptedHeader encryptedHeader = getEncryptedHeader(in, Paths.get(keyPath), keyPassphrase, encryptedHeaderLength);
+//        EncryptedHeader encryptedHeader = getEncryptedHeader(in, Paths.get(keyPath), keyPassphrase, encryptedHeaderLength);
         
         // Iterate through Data Blocks
-        for (int i=0; i<encryptedHeader.getNumRecords(); i++) {
-            EncryptionParameters encryptionParameter =  encryptedHeader.getEncryptionParameters(i);
+//        for (int i=0; i<encryptedHeader.getNumRecords(); i++) {
+//            EncryptionParameters encryptionParameter =  encryptedHeader.getEncryptionParameters(i);
 
-            AlgorithmParameterSpec paramSpec = new IvParameterSpec(encryptionParameter.getEncryptionParameters().getIv());
-            Cipher cipher = null;
-            cipher = Cipher.getInstance("AES/CTR/NoPadding"); // load a cipher AES / Segmented Integer Counter
-            SecretKey secret = new SecretKeySpec(encryptionParameter.getEncryptionParameters().getKey(), 0, 32, "AES");
-            cipher.init(Cipher.DECRYPT_MODE, secret, paramSpec);
+//            AlgorithmParameterSpec paramSpec = new IvParameterSpec(encryptionParameter.getEncryptionParameters().getNonce());
+//            Cipher cipher = null;
+//            cipher = Cipher.getInstance("AES/CTR/NoPadding"); // load a cipher AES / Segmented Integer Counter
+//            SecretKey secret = new SecretKeySpec(encryptionParameter.getEncryptionParameters().getKey(), 0, 32, "AES");
+//            cipher.init(Cipher.DECRYPT_MODE, secret, paramSpec);
                         
-            this.theStream = new CipherInputStream(in, cipher);
-        }
+//            this.theStream = new CipherInputStream(in, cipher);
+//        }
     }
     
     @Override
@@ -119,13 +109,13 @@ public class Crypt4ghInputStream extends InputStream {
      * Offset is always 16 bytes (length of the unencrypted header)
      * The Header object deals with decryption and encryption
      */
-    private EncryptedHeader getEncryptedHeader(InputStream source, Path keyPath, String keyPassphrase, int headerLength) throws Exception {
-        byte[] header = new byte[headerLength];
-        int read = source.read(header);
-        
-        // Pass encrypted ByteBuffer to Header Object; automatic decryption
-        EncryptedHeader encryptedHeader = new EncryptedHeader(ByteBuffer.wrap(header), keyPath, keyPassphrase);
-        
-        return encryptedHeader;
-    }
+//    private EncryptedHeader getEncryptedHeader(InputStream source, Path keyPath, String keyPassphrase, int headerLength) throws Exception {
+//        byte[] header = new byte[headerLength];
+//        int read = source.read(header);
+//        
+//        // Pass encrypted ByteBuffer to Header Object; automatic decryption
+//        EncryptedHeader encryptedHeader = new EncryptedHeader(ByteBuffer.wrap(header), keyPath, keyPassphrase);
+//        
+//        return encryptedHeader;
+//    }
 }

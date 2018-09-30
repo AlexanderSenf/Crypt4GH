@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 ELIXIR EBI
+ * Copyright 2018 ELIXIR EBI
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,13 +15,19 @@
  */
 package crypt4gh;
 
+import com.google.crypto.tink.config.TinkConfig;
+import com.google.crypto.tink.subtle.ChaCha20Poly1305;
+import com.google.crypto.tink.subtle.X25519;
+
 import crypt4gh.dto.EncryptedHeader;
-import crypt4gh.dto.EncryptionParameters;
-import static crypt4gh.dto.EncryptionParameters.Method.AES_256_CTR;
-import crypt4gh.dto.Encryption_AES_256_CTR;
 import crypt4gh.dto.UnencryptedHeader;
 import crypt4gh.util.Glue;
 
+import java.io.BufferedReader;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
+
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -30,21 +36,19 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+
+import java.security.GeneralSecurityException;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
-import java.security.spec.AlgorithmParameterSpec;
+import java.security.NoSuchProviderException;
+import java.security.spec.InvalidKeySpecException;
 
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import javax.crypto.Cipher;
-import javax.crypto.CipherInputStream;
-import javax.crypto.CipherOutputStream;
+
 import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
-import javax.crypto.spec.IvParameterSpec;
-import javax.crypto.spec.SecretKeySpec;
 
 import org.apache.commons.cli.DefaultParser;
 import org.apache.commons.cli.CommandLine;
@@ -52,7 +56,7 @@ import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
-import org.apache.commons.io.IOUtils;
+import org.apache.commons.codec.binary.Base64;
 
 /**
  *
@@ -79,8 +83,11 @@ public class Crypt4gh {
         options.addOption("d", "decrypt", false, "decrypt source");
         options.addOption("f", "file", true, "file source path");
         options.addOption("o", "output", true, "output file path");
-        options.addOption("k", "key", true, "key file path");
-        options.addOption("kp", "keypass", true, "key file passphrase");
+        options.addOption("k", "key", true, "data key");
+        options.addOption("rk", "privatekey", true, "private key file path");
+        options.addOption("rkp", "privatekeypass", true, "private key file passphrase");
+        options.addOption("uk", "publickey", true, "public key file path");
+        options.addOption("ukp", "publickeypass", true, "public key file passphrase");
 
         // Parse Command Line
         CommandLineParser parser = new DefaultParser();
@@ -106,27 +113,47 @@ public class Crypt4gh {
                     System.exit(2);
                 }
             }
-            
-            Path keyPath = null;
-            String keyPassphrase = null;
-            if (cmd.hasOption("k")) {
-                String filePath = cmd.getOptionValue("k");
-                keyPath = Paths.get(filePath);
-                if (keyPath==null) {
+
+            // Private Key
+            Path privateKeyPath = null;
+            String privateKeyPassphrase = null;
+            if (cmd.hasOption("rk")) {
+                String filePath = cmd.getOptionValue("rk");
+                privateKeyPath = Paths.get(filePath);
+                if (privateKeyPath==null) {
                     System.exit(3);
                 } else {
-                    if (cmd.hasOption("kp")) {
-                        keyPassphrase = cmd.getOptionValue("kp");
+                    if (cmd.hasOption("rkp")) {
+                        privateKeyPassphrase = cmd.getOptionValue("rkp");
                     }                    
                 }
             }
 
+            // Public Key
+            Path publicKeyPath = null;
+            String publicKeyPassphrase = null;
+            if (cmd.hasOption("uk")) {
+                String filePath = cmd.getOptionValue("uk");
+                publicKeyPath = Paths.get(filePath);
+                if (publicKeyPath==null) {
+                    System.exit(3);
+                } else {
+                    if (cmd.hasOption("ukp")) {
+                        publicKeyPassphrase = cmd.getOptionValue("ukp");
+                    }                    
+                }
+            }
+            
+            // Load Keys
+            byte[] privateKey = null;
+            byte[] publicKey = null;
+            
             // Detect Mode (Encrypt or Decrypt) and act on it ******************
             if (cmd.hasOption("e")) { // encrypt
-                String aesKey = cmd.getOptionValue("e");
-                encrypt(inputPath, outputFilePath, aesKey, keyPath, keyPassphrase);
+                String key = cmd.getOptionValue("e");
+                encrypt(inputPath, outputFilePath, key, privateKey, publicKey);
             } else if (cmd.hasOption("d")) { // decrypt
-                decrypt(inputPath, outputFilePath, keyPath, keyPassphrase);
+                decrypt(inputPath, outputFilePath, privateKey, publicKey);
             } // ***************************************************************
             
         } catch (ParseException ex) {
@@ -148,85 +175,114 @@ public class Crypt4gh {
     /*
      * Encrypt
      */
-    private static void encrypt(Path source, Path destination, String aesKey, Path keyPath, String keyPassphrase) throws IOException, NoSuchAlgorithmException, NoSuchPaddingException, InvalidKeyException, InvalidAlgorithmParameterException  {        
+    private static void encrypt(Path source, 
+                                Path destination, 
+                                String dataKey,
+                                byte[] privateKey,
+                                byte[] publicKey) throws IOException, 
+                                                           NoSuchAlgorithmException, 
+                                                           NoSuchPaddingException, 
+                                                           InvalidKeyException, 
+                                                           InvalidAlgorithmParameterException, 
+                                                           GeneralSecurityException  {        
         // Establish Output Stream
         OutputStream os = Files.newOutputStream(destination);
+
+        // Generate Curve25519 Shared Secret Key
+        byte[] sharedKey = getSharedKey(privateKey, publicKey);
         
-        // Hack: Always encrypt the whole file!        
-        Encryption_AES_256_CTR parms = new Encryption_AES_256_CTR();
-        parms.setKey(getKey(aesKey.toCharArray()));
-        parms.setIv(getRandomIv());
-        long plainEnd = Files.size(source);
-        long cipherEnd = plainEnd;
-        
-        // Generate Encrypted Header
-        EncryptionParameters[] encryptionParameters = new EncryptionParameters[1];
-        encryptionParameters[0] = new EncryptionParameters(0,plainEnd,0,0, AES_256_CTR, parms);
-        EncryptedHeader encryptedHeader = new EncryptedHeader(encryptionParameters);
-        byte[] encryptedHeaderBytes = encryptedHeader.getEncryptedHeader(keyPath, keyPassphrase);
+        // Generate Encrypted Header and nonce and MAC
+        EncryptedHeader encryptedHeader = new EncryptedHeader(new byte[0], dataKey.getBytes());
+        byte[] encryptedHeaderBytes = encryptedHeader.getEncryptedHeader(sharedKey);
         
         // Generate Unencrypted Header
-        UnencryptedHeader unencryptedHeader = new UnencryptedHeader(MagicNumber, Version, encryptedHeaderBytes.length + 16);
+        UnencryptedHeader unencryptedHeader = new UnencryptedHeader(MagicNumber, 
+                                                                    Version,
+                                                                    0,
+                                                                    null,
+                                                                    encryptedHeaderBytes.length + 20);
         
         // Write Header
         os.write(unencryptedHeader.getHeaderBytes());
         os.write(encryptedHeaderBytes);
         
+        //
+        // Header is written. Write actual file data
+        //
+        
         // Get Input Stream
         InputStream in = Files.newInputStream(source);
         
-        // Create Encrypted Data Stream and write to output stream
-        for (EncryptionParameters encryptionParameter : encryptionParameters) {
-            AlgorithmParameterSpec paramSpec = new IvParameterSpec(encryptionParameter.getEncryptionParameters().getIv());
-
-            Cipher cipher = null;
-            cipher = Cipher.getInstance("AES/CTR/NoPadding"); // load a cipher AES / Segmented Integer Counter
-            SecretKey secret = new SecretKeySpec(encryptionParameter.getEncryptionParameters().getKey(), 0, 32, "AES");
-            cipher.init(Cipher.ENCRYPT_MODE, secret, paramSpec);
-            
-            CipherOutputStream cOut = new CipherOutputStream(os, cipher);
-            IOUtils.copy(in,cOut);            
-            cOut.close();
-        }
+        // Crypt
+        TinkConfig.register();
+        ChaCha20Poly1305 cipher = new ChaCha20Poly1305(dataKey.getBytes());
         
-        // Done! Close the stream
+        // Encrypt - in 64KiB segments
+        byte[] segment = new byte[65535];
+        
+        int seg_len = in.read(segment);
+        while (seg_len > 0) {
+            byte[] encrypted = cipher.encrypt(segment, new byte[0]);
+            
+            os.write(encrypted);
+        }
         in.close();
+        
+        os.flush();
         os.close();
     }
     
     /*
      * Decrypt
      */
-    private static void decrypt(Path source, Path destination, Path keyPath, String keyPassphrase) throws IOException, Exception {
+    private static void decrypt(Path source, 
+                                Path destination, 
+                                byte[] privateKey,
+                                byte[] publicKey) throws IOException, 
+                                                         NoSuchAlgorithmException, 
+                                                         NoSuchPaddingException, 
+                                                         InvalidKeyException, 
+                                                         InvalidAlgorithmParameterException, 
+                                                         GeneralSecurityException,
+                                                         Exception  {
         // Get Input Stream
         InputStream in = Files.newInputStream(source);
         
         // Read unencrypted file Header (validates Magic Number & Version)
         UnencryptedHeader unencryptedHeader = getUnencryptedHeader(in);
-        int encryptedHeaderLength = unencryptedHeader.getEncryptedHeaderLength() - 16;
+        int encryptedHeaderLength = unencryptedHeader.getEncryptedHeaderLength() - 20;
+
+        // Generate Curve25519 Shared Secret Key
+        byte[] sharedKey = getSharedKey(privateKey, publicKey);
+        
+        // Get and Decrypt Header
+        byte[] encryptedBytes = new byte[encryptedHeaderLength];
+        in.read(encryptedBytes);
         
         // Read unencrypted file Header (decryptes this header with Private GPG Key)
-        EncryptedHeader encryptedHeader = getEncryptedHeader(in, keyPath, keyPassphrase, encryptedHeaderLength);
+        EncryptedHeader encryptedHeader = new EncryptedHeader(encryptedBytes, sharedKey, true);
         
         //  Create Output Stream
         OutputStream out = Files.newOutputStream(destination);
+ 
+        // Crypt
+        TinkConfig.register();
+        ChaCha20Poly1305 cipher = new ChaCha20Poly1305(encryptedHeader.getKey());
         
-        // Iterate through Data Blocks
-        for (int i=0; i<encryptedHeader.getNumRecords(); i++) {
-            EncryptionParameters encryptionParameter =  encryptedHeader.getEncryptionParameters(i);
-
-            AlgorithmParameterSpec paramSpec = new IvParameterSpec(encryptionParameter.getEncryptionParameters().getIv());
-            Cipher cipher = null;
-            cipher = Cipher.getInstance("AES/CTR/NoPadding"); // load a cipher AES / Segmented Integer Counter
-            SecretKey secret = new SecretKeySpec(encryptionParameter.getEncryptionParameters().getKey(), 0, 32, "AES");
-            cipher.init(Cipher.DECRYPT_MODE, secret, paramSpec);
+        // Decrypt
+        // Encrypt - in 64KiB segments
+        byte[] segment = new byte[65563]; // 64KiB + nonce (12) + mac (16)
+        
+        int seg_len = in.read(segment);
+        while (seg_len > 0) {
+            byte[] decrypted = cipher.encrypt(segment, new byte[0]); // should be 64KiB
             
-            CipherInputStream cIn = new CipherInputStream(in, cipher);
-            IOUtils.copy(cIn,out);            
+            out.write(decrypted);
         }
          
         // Done: Close Streams
         in.close();
+        out.flush();
         out.close();
     }
 
@@ -252,31 +308,56 @@ public class Crypt4gh {
         
         return unencryptedHeader;
     }
-    
-    /*
-     * Function to read the encrypted header of an encrypted file
-     * Offset is always 16 bytes (length of the unencrypted header)
-     * The Header object deals with decryption and encryption
-     */
-    private static EncryptedHeader getEncryptedHeader(InputStream source, Path keyPath, String keyPassphrase, int headerLength) throws Exception {
-        byte[] header = new byte[headerLength];
-        int read = source.read(header);
         
-        // Pass encrypted ByteBuffer to Header Object; automatic decryption
-        EncryptedHeader encryptedHeader = new EncryptedHeader(ByteBuffer.wrap(header), keyPath, keyPassphrase);
-        
-        return encryptedHeader;
-    }
-    
-    private static byte[] getRandomIv() throws NoSuchAlgorithmException {
-        byte[] random_iv = new byte[16];
-        SecureRandom random = SecureRandom.getInstance("SHA1PRNG");
-        random.nextBytes(random_iv);
-        return random_iv;
-    }
-    
     private static byte[] getKey(char[] password) {
         SecretKey secret = Glue.getInstance().getKey(password, 256);
         return secret.getEncoded();
     }
+    
+    // Incomplete!
+    private static void generateX25519Key(Path keyOut) throws IOException {
+        byte[] generatePrivateKey = X25519.generatePrivateKey();
+
+        FileWriter out = new FileWriter(keyOut.toString());
+        Base64 encoder = new Base64(64);
+        
+        String key_begin = "-----BEGIN PRIVATE KEY-----\n";
+        String end_key = "-----END PRIVATE KEY-----";
+
+        // Todo: ANS.1 Format
+        
+        String pemKeyPre = new String(encoder.encode(generatePrivateKey));
+        String pemKey = key_begin + pemKeyPre + end_key;        
+        try {
+            out.write(pemKey);
+        } finally {
+            out.close();
+        }
+    }
+
+    private static byte[] getSharedKey(byte[] myPrivate, byte[] userPublic) throws InvalidKeyException {
+        byte[] computeSharedSecret = X25519.computeSharedSecret(myPrivate, userPublic);
+        return computeSharedSecret;
+    }
+    
+    private static byte[] loadKey(Path keyIn) throws FileNotFoundException, IOException, NoSuchAlgorithmException, InvalidKeySpecException, NoSuchProviderException {
+        BufferedReader in = new BufferedReader(new FileReader(keyIn.toString()));
+        in.readLine();
+        String key = in.readLine();
+        in.readLine();
+        in.close();
+        
+        Base64 decoder = new Base64(64);
+        byte[] decode = decoder.decode(key); //.substring(20));
+        
+//        ByteArrayInputStream bain = new ByteArrayInputStream(decode);
+//        ASN1InputStream ais = new ASN1InputStream(bain);
+//        while (ais.available() > 0) {
+//            ASN1Primitive obj = ais.readObject();
+//            
+//            System.out.println(ASN1Dump.dumpAsString(obj, true));
+//        }        
+        return decode;
+    }
+ 
 }

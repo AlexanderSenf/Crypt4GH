@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 ELIXIR EBI
+ * Copyright 2018 ELIXIR EBI
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,50 +15,13 @@
  */
 package crypt4gh.dto;
 
-import crypt4gh.util.EgaGPGOutputStream;
-import java.io.BufferedInputStream;
-import java.io.BufferedReader;
-import java.io.ByteArrayInputStream;
+import com.google.crypto.tink.config.TinkConfig;
+import com.google.crypto.tink.subtle.ChaCha20Poly1305;
 
-import java.io.ByteArrayOutputStream;
-import java.io.FileInputStream;
-import java.io.FileReader;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.io.Serializable;
-
-import java.nio.ByteBuffer;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.security.Security;
-
-
-import java.util.Arrays;
-import java.util.Iterator;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
-import org.bouncycastle.openpgp.PGPCompressedData;
-import org.bouncycastle.openpgp.PGPEncryptedDataList;
-import org.bouncycastle.openpgp.PGPException;
-import org.bouncycastle.openpgp.PGPLiteralData;
-import org.bouncycastle.openpgp.PGPObjectFactory;
-import org.bouncycastle.openpgp.PGPPrivateKey;
-import org.bouncycastle.openpgp.PGPPublicKey;
-import org.bouncycastle.openpgp.PGPPublicKeyEncryptedData;
-import org.bouncycastle.openpgp.PGPPublicKeyRing;
-import org.bouncycastle.openpgp.PGPPublicKeyRingCollection;
-import org.bouncycastle.openpgp.PGPSecretKey;
-import org.bouncycastle.openpgp.PGPSecretKeyRingCollection;
-import org.bouncycastle.openpgp.PGPUtil;
-import org.bouncycastle.openpgp.operator.KeyFingerPrintCalculator;
-import org.bouncycastle.openpgp.operator.PBESecretKeyDecryptor;
-import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
-import org.bouncycastle.openpgp.operator.bc.BcPBESecretKeyDecryptorBuilder;
-import org.bouncycastle.openpgp.operator.bc.BcPGPDigestCalculatorProvider;
-import org.bouncycastle.openpgp.operator.bc.BcPublicKeyDataDecryptorFactory;
+import java.security.GeneralSecurityException;
+import java.security.InvalidKeyException;
 
 /**
  *
@@ -66,229 +29,68 @@ import org.bouncycastle.openpgp.operator.bc.BcPublicKeyDataDecryptorFactory;
  */
 public class EncryptedHeader implements Serializable {
     
-    private int numberRecords;
-    private EncryptionParameters[] encryptionParameters;
-
-    /**
-     * Bouncy Castle code for Public Key encrypted Files
-     */
-    private static KeyFingerPrintCalculator fingerPrintCalculater = new BcKeyFingerprintCalculator();
-    private static  BcPGPDigestCalculatorProvider calc = new BcPGPDigestCalculatorProvider();
-    
-    // Expects: Encrypted ByteBuffer --> Automatic Decryption
-    public EncryptedHeader(ByteBuffer bb, Path keyPath, String keyPassphrase) {
-        try {
-            // Read/Decrypt ByteBuffer content & Build Header from Plain Byte Array
-            try (InputStream in = getAsymmetricGPGDecryptingInputStream(new ByteArrayInputStream(bb.array()), keyPath, keyPassphrase)) {
-                
-                // Read/Decrypt ByteBuffer content & Build Header from Plain Byte Array
-                byte[] numRec = new byte[4];
-                in.read(numRec);
-                this.numberRecords = getLittleEndian(numRec);
-                this.encryptionParameters = new EncryptionParameters[numberRecords];
-                for (int i = 0; i<numberRecords; i++) {
-                    byte[] parameter = new byte[84];
-                    in.read(parameter);
-                    EncryptionParameters encryptionParameter = new EncryptionParameters(parameter);
-                    this.encryptionParameters[i] = encryptionParameter;
-                }
-                
-                // Done; close streams
-                in.close();
-            }            
-        } catch (IOException ex) {
-            Logger.getLogger(EncryptedHeader.class.getName()).log(Level.SEVERE, null, ex);
-        }
-    }
-
-    // Expects: Decrypted Values to create new Header (Encryption on Demand)
-    public EncryptedHeader(EncryptionParameters[] encryptionParameters) {
-        this.numberRecords = encryptionParameters.length;
-        this.encryptionParameters = Arrays.copyOf(encryptionParameters, numberRecords);        
-    }
-
-    // Encrypt header with public key, return as byte array
-    public byte[] getEncryptedHeader(Path keyPath, String keyPassphrase) {
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();            
-        
-        try {
-            // Obtain Public Key
-            PGPPublicKey publicKey = readPublicKeyFromCol(Files.newInputStream(keyPath));
-            
-            // Create Byte Array to receive encrypted header            
-            OutputStream out = new EgaGPGOutputStream(baos, publicKey);
-            
-            // Write encrypted header
-            out.write(intToByteArray(numberRecords));
-            for (EncryptionParameters encryptionParameter : encryptionParameters) {
-                out.write(encryptionParameter.toByteArray());
-            }
-
-            // Finish up encryption; close streams.
-            out.close();
-            
-        } catch (IOException ex) {
-            Logger.getLogger(EncryptedHeader.class.getName()).log(Level.SEVERE, null, ex);
-        } catch (PGPException ex) {
-            Logger.getLogger(EncryptedHeader.class.getName()).log(Level.SEVERE, null, ex);
-        }
-
-        // Return encrypted Header as Byte Array
-        return baos.toByteArray();
-    }
-
-    // Get number of encryption blocks
-    public int getNumRecords() {
-        return this.numberRecords;
-    }
-    
-    // Get parameters for one specific encryption block
-    public EncryptionParameters getEncryptionParameters(int index) {
-        return this.encryptionParameters[index];
-    }
+    private byte[] checksum = null;
+    private byte[] key = null;
     
     /*
-     * Decrypt a Public-Key-Encrypted Header
-     *
-     * Uses Bouncy Castle
+     * Constructors
      */
+    public EncryptedHeader(byte[] checksum, byte[] key) {
+        if (checksum!=null) {
+            this.checksum = new byte[64];
+            System.arraycopy(checksum, 0, this.checksum, 0, 64);
+        }
+        this.key = new byte[32];
+        System.arraycopy(key, 0, this.key, 0, 32);
+    }
 
-    // Read a Public Key from asc file
-    public static PGPPublicKey readPublicKeyFromCol(InputStream in) throws IOException, PGPException {
-        in = PGPUtil.getDecoderStream(in);
-        PGPPublicKeyRingCollection pgpPub = new PGPPublicKeyRingCollection(in, new BcKeyFingerprintCalculator());
-        PGPPublicKey key = null;
-        Iterator rIt = pgpPub.getKeyRings();
-        while (key == null && rIt.hasNext()) {
-            PGPPublicKeyRing kRing = (PGPPublicKeyRing) rIt.next();
-            Iterator kIt = kRing.getPublicKeys();
-            while (key == null && kIt.hasNext()) {
-                PGPPublicKey k = (PGPPublicKey) kIt.next();
-                if (k.isEncryptionKey()) {
-                    key = k;
-                }
-            }
-        }
-        if (key == null) {
-            throw new IllegalArgumentException("Can't find encryption key in key ring.");
-        }
-        return key;
-    }    
+    private byte[] getBytes() {
+        byte[] concat = new byte[96];
+        System.arraycopy(this.checksum, 0, concat, 0, 64);
+        System.arraycopy(this.key, 0, concat, 64, 32);
+        return concat;
+    }
     
-    private InputStream getAsymmetricGPGDecryptingInputStream(InputStream c_in, Path keyPath_, String keyPassphrase) {
-        Security.addProvider(new BouncyCastleProvider());
-        InputStream in = null;
+    // Expects: Encrypted ByteBuffer --> Automatic Decryption
+    public EncryptedHeader(byte[] encryptedBytes, byte[] sharedKey, boolean encrypted) throws InvalidKeyException, GeneralSecurityException {
 
-        try {
-            String[] keyPath = new String[]{keyPath_.toString(), "", keyPassphrase};
+        // Register Tink
+        TinkConfig.register();
 
-            String key = keyPath[2]; // password for key file, not password itself
-            if (key==null||key.length()==0) {
-                BufferedReader br = new BufferedReader(new FileReader(keyPath[1]));
-                key = br.readLine();
-                br.close();
-            }
+        // 1. Get Cipher
+        ChaCha20Poly1305 cipher = new ChaCha20Poly1305(sharedKey);
         
-            InputStream keyIn = new BufferedInputStream(new FileInputStream(keyPath[0]));
+        // 2. Enrypt
+        byte[] plaintext = cipher.decrypt(encryptedBytes, new byte[0]);
 
-            PGPObjectFactory pgpF = new PGPObjectFactory(c_in, fingerPrintCalculater);
-            PGPEncryptedDataList    enc;
- 
-            Object                  o = pgpF.nextObject();
-            //
-            // the first object might be a PGP marker packet.
-            //
-            if (o instanceof PGPEncryptedDataList)
-            {
-                enc = (PGPEncryptedDataList)o;
-            }
-            else
-            {
-                enc = (PGPEncryptedDataList)pgpF.nextObject();
-            }
-             
-            //
-            // find the secret key
-            //
-            Iterator<PGPPublicKeyEncryptedData> it = enc.getEncryptedDataObjects();
-            PGPPrivateKey               sKey = null;
-            PGPPublicKeyEncryptedData   pbe = null;
-            PGPSecretKeyRingCollection  pgpSec = new PGPSecretKeyRingCollection(
-                PGPUtil.getDecoderStream(keyIn), fingerPrintCalculater);
-
-            while (sKey == null && it.hasNext())
-            {
-                try {
-                    pbe = it.next();
-                    
-                    PGPSecretKey pgpSecKey = pgpSec.getSecretKey(pbe.getKeyID());
-                    if (pgpSecKey == null)
-                    {
-                        sKey = null;
-                    } else {
-                        PBESecretKeyDecryptor decryptor = new BcPBESecretKeyDecryptorBuilder(new BcPGPDigestCalculatorProvider()).build(key.toCharArray());
-                        //sKey = pgpSecKey.extractPrivateKey(key.toCharArray(), "BC");
-                        sKey = pgpSecKey.extractPrivateKey(decryptor);
-                    }
-                } catch (Throwable t) {
-                    System.out.println("Error -- " + t.getLocalizedMessage());
-                }
-            }
-            
-            if (sKey == null)
-            {
-                throw new IllegalArgumentException("secret key for message not found.");
-            }
-            
-            BcPublicKeyDataDecryptorFactory pkddf = new BcPublicKeyDataDecryptorFactory(sKey);
-            //InputStream         clear = pbe.getDataStream(sKey, "BC");
-            InputStream         clear = pbe.getDataStream(pkddf);
-            
-            
-            PGPObjectFactory    plainFact = new PGPObjectFactory(clear, fingerPrintCalculater);
-            
-            Object              message = plainFact.nextObject();
+        // 3. Assign
+        this.checksum = new byte[64];
+        System.arraycopy(plaintext, 0, this.checksum, 0, 64);
+        this.key = new byte[32];
+        System.arraycopy(plaintext, 64, this.key, 0, 32);
+    }
     
-            if (message instanceof PGPCompressedData)
-            {
-                PGPCompressedData   cData = (PGPCompressedData)message;
-                PGPObjectFactory    pgpFact = new PGPObjectFactory(cData.getDataStream(), fingerPrintCalculater);
-                
-                message = pgpFact.nextObject();
-            }
-            
-            if (message instanceof PGPLiteralData)
-            {
-                PGPLiteralData ld = (PGPLiteralData)message;
-                in = ld.getInputStream();
-            }            
-        } catch (IOException | PGPException ex) {
-            System.out.println(" *** " + ex.toString());
-        }
+    // Encrypt header with public key, return as byte array
+    public byte[] getEncryptedHeader(byte[] sharedKey) throws GeneralSecurityException, IOException {
+
+        // Register Tink
+        TinkConfig.register();
+
+        // 1. Get Cipher
+        ChaCha20Poly1305 cipher = new ChaCha20Poly1305(sharedKey);
         
-        return in;
+        // 2. Enrypt
+        byte[] ciphertext = cipher.encrypt(this.getBytes(), new byte[0]);
+        
+        // 3. Return encrypted Header as Byte Array
+        return ciphertext;
     }
     
-    // -------------------------------------------------------------------------
-
-    // Convert 32 Bit Integer to Byte Array
-    private byte[] intToByteArray(int a)
-    {
-        ByteBuffer dbuf = ByteBuffer.allocate(4);
-        dbuf.order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(a);
-        return dbuf.order(java.nio.ByteOrder.LITTLE_ENDIAN).array();
-    }
-
-    // Convert 64 Bit Long to Byte Array
-    private byte[] longToByteArray(long a)
-    {
-        ByteBuffer dbuf = ByteBuffer.allocate(8);
-        dbuf.order(java.nio.ByteOrder.LITTLE_ENDIAN).putLong(a);
-        return dbuf.order(java.nio.ByteOrder.LITTLE_ENDIAN).array();
-    }
-
-    private int getLittleEndian(byte[] bytes) {
-        return java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt();
+    public byte[] getKey() {
+        return this.key;
     }
     
+    public byte[] getChecksum() {
+        return this.checksum;
+    }
 }
