@@ -20,6 +20,8 @@ import com.google.crypto.tink.subtle.ChaCha20Poly1305;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.security.GeneralSecurityException;
 import java.security.InvalidKeyException;
 
@@ -29,25 +31,54 @@ import java.security.InvalidKeyException;
  */
 public class EncryptedHeader implements Serializable {
     
-    private byte[] checksum = null;
+    // 0 = none (0 bytes)
+    // 1 = md5 (32 bytes)
+    // 2 = sha-256 (64 bytes)
+    private int checksumType = 0; 
+    // Checksum appended to data, at the end of the file
+    // 0 = Chacha20-ietf-Poly1305 (Default & only choice; 32 bytes)
+    private int encryptionMethod = 0;
     private byte[] key = null;
     
     /*
      * Constructors
+     *
+     * To add: Check validity of input parameters
      */
-    public EncryptedHeader(byte[] checksum, byte[] key) {
-        if (checksum!=null) {
-            this.checksum = new byte[64];
-            System.arraycopy(checksum, 0, this.checksum, 0, 64);
+    public EncryptedHeader(int checksumType, int encryptionMethod, byte[] key) {
+        this.checksumType = checksumType;
+        
+        this.encryptionMethod = encryptionMethod;
+        switch (encryptionMethod) {
+            case 0:
+                this.key = new byte[32];
+                System.arraycopy(key, 0, this.key, 0, 32);
+                break;
         }
-        this.key = new byte[32];
-        System.arraycopy(key, 0, this.key, 0, 32);
     }
 
     private byte[] getBytes() {
-        byte[] concat = new byte[96];
-        System.arraycopy(this.checksum, 0, concat, 0, 64);
-        System.arraycopy(this.key, 0, concat, 64, 32);
+        int headerLength = 8; // 4-byte checksumType and 4-byte encryptionType
+        int checksumLength = 0;
+        
+        int keyLength = 0;
+        switch (encryptionMethod) {
+            case 0:
+                keyLength = 32;
+                break;
+        }
+        headerLength += keyLength;
+
+        // Length of encrypted header (in its unencrypted format) is now known
+        byte[] concat = new byte[headerLength];
+        int position = 0;
+        System.arraycopy(intToLittleEndian(this.checksumType), 0, concat, position, 4);
+        position += 4;
+        System.arraycopy(intToLittleEndian(this.encryptionMethod), 0, concat, position, 4);
+        position += 4;
+        System.arraycopy(this.key, 0, concat, position, 32);
+        
+        // Byte array complete
         return concat;
     }
     
@@ -60,14 +91,23 @@ public class EncryptedHeader implements Serializable {
         // 1. Get Cipher
         ChaCha20Poly1305 cipher = new ChaCha20Poly1305(sharedKey);
         
-        // 2. Enrypt
+        // 2. Decrypt
         byte[] plaintext = cipher.decrypt(encryptedBytes, new byte[0]);
 
         // 3. Assign
-        this.checksum = new byte[64];
-        System.arraycopy(plaintext, 0, this.checksum, 0, 64);
+        int position = 0;
+        byte[] cT = new byte[4];
+        System.arraycopy(plaintext, position, cT, 0, 4);
+        this.checksumType = getLittleEndian(cT);
+        position += 4;
+        
+        byte[] eT = new byte[4];
+        System.arraycopy(plaintext, position, eT, 0, 4);
+        this.encryptionMethod = getLittleEndian(eT);
+        position += 4;
+        
         this.key = new byte[32];
-        System.arraycopy(plaintext, 64, this.key, 0, 32);
+        System.arraycopy(plaintext, position, this.key, 0, 32);
     }
     
     // Encrypt header with public key, return as byte array
@@ -85,12 +125,36 @@ public class EncryptedHeader implements Serializable {
         // 3. Return encrypted Header as Byte Array
         return ciphertext;
     }
+
+    public int getEncryptionMethod() {
+        return this.encryptionMethod;
+    }
     
     public byte[] getKey() {
         return this.key;
     }
     
-    public byte[] getChecksum() {
-        return this.checksum;
+    public int getChecksumType() {
+        return this.checksumType;
     }
+    
+    /*
+     * Private support methods
+     * - Convert byte[4] to integer; big/little endian methods
+     */
+    private int getLittleEndian(byte[] bytes) {
+        return java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt();
+    }
+    
+    private int getBigEndian(byte[] bytes) {
+        return java.nio.ByteBuffer.wrap(bytes).getInt();
+    }
+
+    private static byte[] intToLittleEndian(long numero) {
+            ByteBuffer bb = ByteBuffer.allocate(4);
+            bb.order(ByteOrder.LITTLE_ENDIAN);
+            bb.putInt((int) numero);
+            return bb.array();
+    }    
+
 }
