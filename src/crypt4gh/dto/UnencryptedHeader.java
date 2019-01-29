@@ -17,6 +17,7 @@ package crypt4gh.dto;
 
 import java.io.Serializable;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.Arrays;
 import java.util.Base64;
 
@@ -26,9 +27,9 @@ import java.util.Base64;
  */
 public class UnencryptedHeader implements Serializable {
     private byte[] magicNumber = new byte[8];           // 'crypt4gh'
-    private byte[] version = new byte[4];               // 0
+    private byte[] version = new byte[4];               // 1
     private byte[] encryptedHeaderLength = new byte[4]; // length of the encrypted header (inc 28 byte nonce+MAC)
-    private byte headerMethod;                          // 0
+    private int headerMethod;                           // 0
     private byte[] publicKey = new byte[4];             // {public key bytes}
     
     // Instantiate header fields from byte array
@@ -37,15 +38,17 @@ public class UnencryptedHeader implements Serializable {
         version = Arrays.copyOfRange(bytes, 8, 12);
         encryptedHeaderLength = Arrays.copyOfRange(bytes, 12, 16);
         int len = getLittleEndian(encryptedHeaderLength);        
-        headerMethod = bytes[16];
-        publicKey = Arrays.copyOfRange(bytes, 17, 21);
+        byte[] hT = new byte[4];
+        System.arraycopy(bytes, 16, hT, 0, 4);
+        headerMethod = getLittleEndian(hT);
+        publicKey = Arrays.copyOfRange(bytes, 20, 24);
     }
     
     // Instantiate header by providing values
     public UnencryptedHeader(byte[] magicNumber, 
                              byte[] version,
                              byte[] encryptedHeaderLength,
-                             byte headerMethod,
+                             int headerMethod,
                              byte[] publicKey) {
         this.magicNumber = Arrays.copyOf(magicNumber, 8);
         this.version = Arrays.copyOf(version, 4);
@@ -64,7 +67,7 @@ public class UnencryptedHeader implements Serializable {
         ByteBuffer dbuf1 = ByteBuffer.allocate(4);        
         dbuf1.order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(encryptedHeaderLength);
         this.encryptedHeaderLength = dbuf1.order(java.nio.ByteOrder.LITTLE_ENDIAN).array();        
-        this.headerMethod = (byte)headerMethod;
+        this.headerMethod = headerMethod;
         this.publicKey = Arrays.copyOf(public_key, 4);
     }
 
@@ -92,7 +95,7 @@ public class UnencryptedHeader implements Serializable {
     }
     
     // Get Header Method
-    public byte getHeaderMethod() {
+    public int getHeaderMethod() {
         return this.headerMethod;
     }
     
@@ -105,20 +108,18 @@ public class UnencryptedHeader implements Serializable {
     public byte[] getHeaderBytes() {
         //int len = getLittleEndian(this.encryptedHeaderLength);
         //int headerLen = 21 + len;
-        int headerLen = 21;
+        int headerLen = 24;
         byte[] concatenated = new byte[headerLen];
         
         System.arraycopy(this.magicNumber, 0, concatenated, 0, 8);
         System.arraycopy(this.version, 0, concatenated, 8, 4);
         System.arraycopy(this.encryptedHeaderLength, 0, concatenated, 12, 4);
-        
-        concatenated[16] = this.headerMethod;
-        
-        System.arraycopy(this.publicKey, 0, concatenated, 17, 4);
+        System.arraycopy(intToLittleEndian(this.headerMethod), 0, concatenated, 16, 4);
+        System.arraycopy(this.publicKey, 0, concatenated, 20, 4);
         
         return concatenated;
     }
-/*    
+    
     public void print() {
         System.out.println("magicNumber: " + new String(magicNumber));
         System.out.println("version: " + new String(version));
@@ -128,7 +129,7 @@ public class UnencryptedHeader implements Serializable {
         String encodedString = Base64.getEncoder().encodeToString(publicKey);
         System.out.println("publicKey Base64: " + encodedString);
     }
-*/    
+    
     /*
      * Private support methods
      * - Convert byte[4] to integer; big/little endian methods
@@ -141,4 +142,10 @@ public class UnencryptedHeader implements Serializable {
         return java.nio.ByteBuffer.wrap(bytes).getInt();
     }
 
+    private static byte[] intToLittleEndian(long numero) {
+            ByteBuffer bb = ByteBuffer.allocate(4);
+            bb.order(ByteOrder.LITTLE_ENDIAN);
+            bb.putInt((int) numero);
+            return bb.array();
+    }    
 }

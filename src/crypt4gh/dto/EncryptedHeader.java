@@ -31,10 +31,6 @@ import java.security.InvalidKeyException;
  */
 public class EncryptedHeader implements Serializable {
     
-    // 0 = none (0 bytes)
-    // 1 = md5 (32 bytes)
-    // 2 = sha-256 (64 bytes)
-    private int checksumType = 0; 
     // Checksum appended to data, at the end of the file
     // 0 = Chacha20-ietf-Poly1305 (Default & only choice; 32 bytes)
     private int encryptionMethod = 0;
@@ -45,9 +41,7 @@ public class EncryptedHeader implements Serializable {
      *
      * To add: Check validity of input parameters
      */
-    public EncryptedHeader(int checksumType, int encryptionMethod, byte[] key) {
-        this.checksumType = checksumType;
-        
+    public EncryptedHeader(int encryptionMethod, byte[] key) {
         this.encryptionMethod = encryptionMethod;
         switch (encryptionMethod) {
             case 0:
@@ -72,8 +66,6 @@ public class EncryptedHeader implements Serializable {
         // Length of encrypted header (in its unencrypted format) is now known
         byte[] concat = new byte[headerLength];
         int position = 0;
-        System.arraycopy(intToLittleEndian(this.checksumType), 0, concat, position, 4);
-        position += 4;
         System.arraycopy(intToLittleEndian(this.encryptionMethod), 0, concat, position, 4);
         position += 4;
         System.arraycopy(this.key, 0, concat, position, 32);
@@ -96,11 +88,6 @@ public class EncryptedHeader implements Serializable {
 
         // 3. Assign
         int position = 0;
-        byte[] cT = new byte[4];
-        System.arraycopy(plaintext, position, cT, 0, 4);
-        this.checksumType = getLittleEndian(cT);
-        position += 4;
-        
         byte[] eT = new byte[4];
         System.arraycopy(plaintext, position, eT, 0, 4);
         this.encryptionMethod = getLittleEndian(eT);
@@ -132,10 +119,6 @@ public class EncryptedHeader implements Serializable {
     
     public byte[] getKey() {
         return this.key;
-    }
-    
-    public int getChecksumType() {
-        return this.checksumType;
     }
     
     /*

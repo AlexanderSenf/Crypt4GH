@@ -78,6 +78,8 @@ public class Crypt4gh {
     public static byte[] MagicNumber = new byte[] {99, 114, 121, 112, 116, 52, 103, 104};
     public static byte[] Version = new byte[] {1, 0, 0, 0};
     
+    public static byte[] HeaderMethod = new byte[] {0, 0, 0, 0};
+    
     /**
      * @param args the command line arguments
      */
@@ -95,7 +97,6 @@ public class Crypt4gh {
         options.addOption("rkp", "privatekeypass", true, "private key file passphrase");
         options.addOption("uk", "publickey", true, "public key file path");
         options.addOption("ukp", "publickeypass", true, "public key file passphrase");
-        options.addOption("ct", "checksumtype", true, "checksum type of plain data checksum");
 
         options.addOption("t", "testme", false, "test the operations of the algorithm");
         
@@ -159,13 +160,6 @@ public class Crypt4gh {
                 }
             }
 
-            // Optional unencrypted data checksum
-            int checksumType = 0;
-            if (cmd.hasOption("ct")) {
-                String sChecksumType = cmd.getOptionValue("ct");
-                checksumType = Integer.parseInt(sChecksumType);
-            }
-            
             // Load Keys
             byte[] privateKey = loadKey(privateKeyPath);
             byte[] publicKey = loadKey(publicKeyPath);
@@ -174,8 +168,9 @@ public class Crypt4gh {
             if (cmd.hasOption("e")) { // encrypt
                 //String key = cmd.getOptionValue("e");
                 byte[] key = Glue.getInstance().GenerateRandomString(24, 48, 7, 7, 7, 3);
-                int encryptionType = 0;
-                encrypt(inputPath, outputFilePath, checksumType, encryptionType, key, privateKey, publicKey);
+                int encryptionType = 0;        
+
+                encrypt(inputPath, outputFilePath, encryptionType, key, privateKey, publicKey);
             } else if (cmd.hasOption("d")) { // decrypt
                 decrypt(inputPath, outputFilePath, privateKey, publicKey);
             } // ***************************************************************
@@ -201,7 +196,6 @@ public class Crypt4gh {
      */
     private static void encrypt(Path source, 
                                 Path destination, 
-                                int checksumType,
                                 int encryptionType,
                                 byte[] dataKey,
                                 byte[] privateKey,
@@ -219,8 +213,7 @@ public class Crypt4gh {
         
         // Generate Encrypted Header and nonce and MAC
         //EncryptedHeader encryptedHeader = new EncryptedHeader(new byte[0], dataKey.getBytes());
-        EncryptedHeader encryptedHeader = new EncryptedHeader(checksumType, 
-                                                              encryptionType,
+        EncryptedHeader encryptedHeader = new EncryptedHeader(encryptionType,
                                                               dataKey);
         byte[] encryptedHeaderBytes = encryptedHeader.getEncryptedHeader(sharedKey);
         
@@ -249,16 +242,6 @@ public class Crypt4gh {
         // Encrypt - in 64KiB segments
         byte[] segment = new byte[65535];
 
-        // Handle file checksums
-        byte[] checksum = null;
-        MessageDigest digest = null;
-        if (checksumType==1) {
-            digest = MessageDigest.getInstance("MD5");
-        } else if (checksumType==2) {
-            digest = MessageDigest.getInstance("SHA-256");
-        }
-        int digestLength = digest.getDigestLength();
-
         /*
          * Main Encryption Loop: Process data in 64K blocks, handle Checksum
          */
@@ -270,50 +253,11 @@ public class Crypt4gh {
             // Get next data segment
             seg_len = in.read(segment);
             
-            // Calculate checksum, if specified.
-            if (digest!=null) {
-                digest.update(to_enc);
-            }
-
-            // Is end of data reached? Calculate digest, append, if specified
-            boolean extraBlock = false;
-            byte[] extraBlockBytes = null;
-            if (digest != null && seg_len == -1) {
-                checksum = digest.digest();
-                String printHexBinary = DatatypeConverter.printHexBinary(checksum);
-                System.out.println("Checksum Encrypt: " + printHexBinary);
-                
-                if ( (to_enc.length+digestLength) > 65535 ) {
-                    extraBlock = true;
-                    byte[] to_enc_new = new byte[65535];
-                    int delta = (to_enc.length+digestLength) - 65535;
-                    System.arraycopy(to_enc, 0, to_enc_new, 0, to_enc.length);
-                    System.arraycopy(checksum, 0, to_enc_new, to_enc.length, (checksum.length - delta));
-                    // does this work??
-                    to_enc = to_enc_new;
-                    
-                    extraBlockBytes = new byte[delta];
-                    System.arraycopy(checksum, (checksum.length - delta), extraBlockBytes, 0, delta);
-                } else {
-                    byte[] to_enc_new = new byte[to_enc.length+digestLength];
-                    System.arraycopy(to_enc, 0, to_enc_new, 0, to_enc.length);
-                    System.arraycopy(checksum, 0, to_enc_new, to_enc.length, checksum.length);
-                    // does this work??
-                    to_enc = to_enc_new;
-                }
-            }
-            
             // Encrypt
             byte[] encrypted = cipher.encrypt(to_enc, new byte[0]);
             
             // Write data to output stream
             os.write(encrypted);
-            
-            // Corner Case
-            if (extraBlock) {
-                byte[] extraEncrypted = cipher.encrypt(extraBlockBytes, new byte[0]);
-                os.write(extraEncrypted);
-            }
         }
         in.close();
         
@@ -359,16 +303,6 @@ public class Crypt4gh {
         byte[] dataKey = encryptedHeader.getKey();
         ChaCha20Poly1305 cipher = new ChaCha20Poly1305(dataKey);
         
-        // Checksum Handling
-        byte[] checksum = null;
-        MessageDigest digest = null;
-        if (encryptedHeader.getChecksumType()==1) {
-            digest = MessageDigest.getInstance("MD5");
-        } else if (encryptedHeader.getChecksumType()==2) {
-            digest = MessageDigest.getInstance("SHA-256");
-        }
-        int digestLength = (digest!=null)?digest.getDigestLength():0;
-        
         // Decrypt Loop
         // Encrypt - in 64KiB segments
         byte[] segment = new byte[65563]; // 64KiB + nonce (12) + mac (16)
@@ -383,53 +317,8 @@ public class Crypt4gh {
             // Decrypt data
             byte[] decrypted = cipher.decrypt(sub_seg, new byte[0]); // should be 64KiB
             
-            // Checksum handling, final block
-            byte[] output = null;
-            if (digest!=null && seg_len < 65563) { // next block is last (may contain data or only checksum)
-                byte[] data_portion = null;
-                
-                // Corner Case: Final Block
-                if ( (seg_len > -1) && ((seg_len-28) < digestLength) ) { // Checksum spans blocks
-                    // Segment has last bit of checksum
-                    int data_bit = digestLength - (seg_len-28);
-                    int delta = digestLength - data_bit;
-                    data_portion = new byte[decrypted.length-delta];
-                    System.arraycopy(decrypted, 0, data_portion, 0, data_portion.length);
-                    
-                    // Assemble checksum
-                    checksum = new byte[digestLength];
-                    System.arraycopy(decrypted, data_portion.length, checksum, 0, delta);
-                    
-                    // Last block: decrypt, and append to checksum
-                    sub_seg = Arrays.copyOfRange(segment, 0, seg_len);
-                    decrypted = cipher.decrypt(sub_seg, new byte[0]);
-                    System.arraycopy(decrypted, 0, checksum, delta, data_bit);
-
-                    String printHexBinary = DatatypeConverter.printHexBinary(checksum);
-                    System.out.println("Checksum Decrypt (spanning cipher blocks): " + printHexBinary);
-                    
-                    // End loop
-                    seg_len = -1;
-                } else { // Checksum wholly contained in block
-                    data_portion = new byte[decrypted.length-digestLength];
-                    System.arraycopy(decrypted, 0, data_portion, 0, data_portion.length);
-                    checksum = new byte[digestLength];
-                    System.arraycopy(decrypted, data_portion.length, checksum, 0, digestLength);
-
-                    String printHexBinary = DatatypeConverter.printHexBinary(checksum);
-                    System.out.println("Checksum Decrypt: " + printHexBinary);
-                }
-                
-                out.write(data_portion);
-            } else if (digest!=null && decrypted.length == 65535) {               
-                digest.update(decrypted);
-                out.write(output);
-            } else if (digest==null) {
-                out.write(output);
-            }
-            
             // Write decryted data to output stream
-            //out.write(decrypted);
+            out.write(decrypted);
         }
          
         // Done: Close Streams
@@ -442,7 +331,7 @@ public class Crypt4gh {
      * Function to read the unencrypted header of an encrypted file
      */
     private static UnencryptedHeader getUnencryptedHeader(InputStream source) throws Exception {
-        byte[] header = new byte[21];
+        byte[] header = new byte[24];
         source.read(header);
 
         // Generate Header Object
@@ -544,7 +433,6 @@ public class Crypt4gh {
         // Call encryption function 
         encrypt(tempFile1.toPath(), 
                 tempFile2.toPath(), 
-                2,
                 0,
                 dataKey,
                 privateKey_party1,
