@@ -23,6 +23,7 @@ import static com.google.crypto.tink.subtle.X25519.generatePrivateKey;
 import static com.google.crypto.tink.subtle.X25519.publicFromPrivate;
 
 import crypt4gh.dto.EncryptedHeader;
+import crypt4gh.dto.PrivateKey;
 import crypt4gh.dto.UnencryptedHeader;
 import crypt4gh.util.Glue;
 
@@ -161,7 +162,7 @@ public class Crypt4gh {
             }
 
             // Load Keys
-            byte[] privateKey = loadKey(privateKeyPath);
+            byte[] privateKey = loadEncryptedKey(privateKeyPath, privateKeyPassphrase);
             byte[] publicKey = loadKey(publicKeyPath);
             
             // Detect Mode (Encrypt or Decrypt) and act on it ******************
@@ -399,6 +400,30 @@ public class Crypt4gh {
 //            System.out.println(ASN1Dump.dumpAsString(obj, true));
 //        }        
         return decode;
+    }
+    private static byte[] loadEncryptedKey(Path keyIn, String keyPassIn) throws FileNotFoundException, IOException, NoSuchAlgorithmException, InvalidKeySpecException, NoSuchProviderException, GeneralSecurityException {
+        BufferedReader in = new BufferedReader(new FileReader(keyIn.toString()));
+        in.readLine();
+        String key = in.readLine();
+        in.readLine();
+        in.close();
+                
+        Base64 decoder = new Base64();
+        byte[] decode = decoder.decode(key); //.substring(20));
+        PrivateKey pk = new PrivateKey(decode, keyPassIn);
+        
+//        String decodeString = new String(decode);
+//        PrivateKey pk = new PrivateKey(decodeString, keyPassIn);
+        
+//        ByteArrayInputStream bain = new ByteArrayInputStream(decode);
+//        ASN1InputStream ais = new ASN1InputStream(bain);
+//        while (ais.available() > 0) {
+//            ASN1Primitive obj = ais.readObject();
+//            
+//            System.out.println(ASN1Dump.dumpAsString(obj, true));
+//        }
+
+        return pk.getKey();
     }
 
     /*
