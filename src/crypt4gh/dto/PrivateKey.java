@@ -15,6 +15,7 @@
  */
 package crypt4gh.dto;
 
+import at.favre.lib.crypto.bcrypt.BCrypt;
 import at.favre.lib.crypto.bkdf.KeyDerivationFunction;
 import at.favre.lib.crypto.bkdf.Version;
 import com.google.crypto.tink.config.TinkConfig;
@@ -90,14 +91,12 @@ public class PrivateKey {
     
     // Derive key from input data (bcrypt key derivation function)
     private byte[] getPass() throws NoSuchAlgorithmException, InvalidKeySpecException, UnsupportedEncodingException {
-        KeyDerivationFunction kdf = new KeyDerivationFunction.Default(Version.HKDF_HMAC512);
-        
+        KeyDerivationFunction kdf = new KeyDerivationFunction.Default(Version.DEFAULT_VERSION);        
         byte[] pass = kdf.derive(this.bSalt, 
                                  this.keyPhrase.toCharArray(), 
-                                 6, 
+                                 7, 
                                  null, 
                                  32);
-        
         
         return pass;
     }

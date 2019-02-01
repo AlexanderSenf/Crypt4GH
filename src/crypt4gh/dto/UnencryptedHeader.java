@@ -30,7 +30,7 @@ public class UnencryptedHeader implements Serializable {
     private byte[] version = new byte[4];               // 1
     private byte[] encryptedHeaderLength = new byte[4]; // length of the encrypted header (inc 28 byte nonce+MAC)
     private int headerMethod;                           // 0
-    private byte[] publicKey = new byte[4];             // {public key bytes}
+    private byte[] publicKey = new byte[32];             // {public key bytes}
     
     // Instantiate header fields from byte array
     public UnencryptedHeader(byte[] bytes) {
@@ -41,7 +41,7 @@ public class UnencryptedHeader implements Serializable {
         byte[] hT = new byte[4];
         System.arraycopy(bytes, 16, hT, 0, 4);
         headerMethod = getLittleEndian(hT);
-        publicKey = Arrays.copyOfRange(bytes, 20, 24);
+        publicKey = Arrays.copyOfRange(bytes, 20, 52);
     }
     
     // Instantiate header by providing values
@@ -54,7 +54,7 @@ public class UnencryptedHeader implements Serializable {
         this.version = Arrays.copyOf(version, 4);
         this.encryptedHeaderLength = Arrays.copyOf(encryptedHeaderLength, 4);
         this.headerMethod = headerMethod;
-        this.publicKey = Arrays.copyOf(publicKey, 4);
+        this.publicKey = Arrays.copyOf(publicKey, 32);
     }
 
     public UnencryptedHeader(byte[] magicNumber, 
@@ -68,7 +68,7 @@ public class UnencryptedHeader implements Serializable {
         dbuf1.order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(encryptedHeaderLength);
         this.encryptedHeaderLength = dbuf1.order(java.nio.ByteOrder.LITTLE_ENDIAN).array();        
         this.headerMethod = headerMethod;
-        this.publicKey = Arrays.copyOf(public_key, 4);
+        this.publicKey = Arrays.copyOf(public_key, 32);
     }
 
     public UnencryptedHeader(ByteBuffer bb) {
@@ -100,22 +100,22 @@ public class UnencryptedHeader implements Serializable {
     }
     
     // Get Public Key as String
-    public String getPublicKey() {
-        return new String(publicKey);
+    public byte[] getPublicKeyBytes() {
+        return this.publicKey;
     }
-    
+
     // Get byte array version of header
     public byte[] getHeaderBytes() {
         //int len = getLittleEndian(this.encryptedHeaderLength);
         //int headerLen = 21 + len;
-        int headerLen = 24;
+        int headerLen = 52;
         byte[] concatenated = new byte[headerLen];
         
         System.arraycopy(this.magicNumber, 0, concatenated, 0, 8);
         System.arraycopy(this.version, 0, concatenated, 8, 4);
         System.arraycopy(this.encryptedHeaderLength, 0, concatenated, 12, 4);
         System.arraycopy(intToLittleEndian(this.headerMethod), 0, concatenated, 16, 4);
-        System.arraycopy(this.publicKey, 0, concatenated, 20, 4);
+        System.arraycopy(this.publicKey, 0, concatenated, 20, 32);
         
         return concatenated;
     }

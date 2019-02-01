@@ -36,6 +36,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.PrintWriter;
 
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
@@ -45,7 +46,6 @@ import java.nio.file.Paths;
 import java.security.GeneralSecurityException;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
-import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
 import java.security.spec.InvalidKeySpecException;
@@ -56,7 +56,6 @@ import java.util.logging.Logger;
 
 import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
-import javax.xml.bind.DatatypeConverter;
 
 import org.apache.commons.cli.DefaultParser;
 import org.apache.commons.cli.CommandLine;
@@ -93,11 +92,12 @@ public class Crypt4gh {
         options.addOption("d", "decrypt", false, "decrypt source");
         options.addOption("f", "file", true, "file source path");
         options.addOption("o", "output", true, "output file path");
-        options.addOption("k", "key", true, "data key");
+        //options.addOption("k", "key", true, "data key");
         options.addOption("rk", "privatekey", true, "private key file path");
         options.addOption("rkp", "privatekeypass", true, "private key file passphrase");
         options.addOption("uk", "publickey", true, "public key file path");
         options.addOption("ukp", "publickeypass", true, "public key file passphrase");
+        options.addOption("gk", "genkey", true, "generate a public/private key pair");
 
         options.addOption("t", "testme", false, "test the operations of the algorithm");
         
@@ -108,6 +108,12 @@ public class Crypt4gh {
 
             if (cmd.hasOption("t")) {
                 testMe();
+                System.exit(1);                
+            }
+            
+            if (cmd.hasOption("gk")) {
+                String keyName = cmd.getOptionValue("gk");
+                genKeys(keyName);
                 System.exit(1);                
             }
             
@@ -161,9 +167,13 @@ public class Crypt4gh {
                 }
             }
 
-            // Load Keys
-            byte[] privateKey = loadEncryptedKey(privateKeyPath, privateKeyPassphrase);
-            byte[] publicKey = loadKey(publicKeyPath);
+            // Load Keys (support unencrypted private keys, allow specification of a public key)
+            byte[] privateKey = (privateKeyPassphrase!=null)?
+                        loadEncryptedKey(privateKeyPath, privateKeyPassphrase):
+                        loadKey(privateKeyPath);
+            byte[] publicKey = (publicKeyPath!=null)?
+                        loadKey(publicKeyPath):
+                        null;
             
             // Detect Mode (Encrypt or Decrypt) and act on it ******************
             if (cmd.hasOption("e")) { // encrypt
@@ -212,6 +222,12 @@ public class Crypt4gh {
         // Generate Curve25519 Shared Secret Key
         byte[] sharedKey = getSharedKey(privateKey, publicKey);
         
+        // Data Key: Id not specified, auto-generate a private key on the spot
+        // [Or generate s shared key between two randomly generated keys]
+        if ((dataKey == null) || (dataKey.length!=32)) {
+            dataKey =  X25519.generatePrivateKey();
+        }
+        
         // Generate Encrypted Header and nonce and MAC
         //EncryptedHeader encryptedHeader = new EncryptedHeader(new byte[0], dataKey.getBytes());
         EncryptedHeader encryptedHeader = new EncryptedHeader(encryptionType,
@@ -219,11 +235,12 @@ public class Crypt4gh {
         byte[] encryptedHeaderBytes = encryptedHeader.getEncryptedHeader(sharedKey);
         
         // Generate Unencrypted Header
+        byte[] ownPublicKey = publicFromPrivate(privateKey);
         UnencryptedHeader unencryptedHeader = new UnencryptedHeader(MagicNumber, 
                                                                     Version,
                                                                     encryptedHeaderBytes.length,
                                                                     0,
-                                                                    sharedKey);
+                                                                    ownPublicKey);
         
         // Write Header
         os.write(unencryptedHeader.getHeaderBytes());
@@ -285,7 +302,12 @@ public class Crypt4gh {
         // Read unencrypted file Header (validates Magic Number & Version)
         UnencryptedHeader unencryptedHeader = getUnencryptedHeader(in);
         int encryptedHeaderLength = unencryptedHeader.getEncryptedHeaderLength();
-
+        
+        // Obtain public key from header, unless specified
+        if (publicKey==null) {
+            publicKey = unencryptedHeader.getPublicKeyBytes();
+        }
+        
         // Generate Curve25519 Shared Secret Key
         byte[] sharedKey = getSharedKey(privateKey, publicKey);
         
@@ -332,7 +354,7 @@ public class Crypt4gh {
      * Function to read the unencrypted header of an encrypted file
      */
     private static UnencryptedHeader getUnencryptedHeader(InputStream source) throws Exception {
-        byte[] header = new byte[24];
+        byte[] header = new byte[52];
         source.read(header);
 
         // Generate Header Object
@@ -426,6 +448,33 @@ public class Crypt4gh {
         return pk.getKey();
     }
 
+    /*
+     * Key Generation function
+     * 
+     * Generate a .pub and a .sec file with keys.
+     */
+    private static void genKeys(String keyName) throws InvalidKeyException, FileNotFoundException {
+        byte[] privateKey = generatePrivateKey();
+        byte[] publicFromPrivate = publicFromPrivate(privateKey);
+
+        Base64 b = new Base64();
+        
+        PrintWriter prkf = new PrintWriter(keyName.concat(".sec"));
+        prkf.println("-----BEGIN PRIVATE KEY-----");
+        prkf.println(b.encodeAsString(privateKey));
+        prkf.print("-----END PRIVATE KEY-----");
+        prkf.close();
+        
+        PrintWriter pbkf = new PrintWriter(keyName.concat(".pub"));
+        pbkf.println("-----BEGIN CRYPT4GH PUBLIC KEY-----");
+        pbkf.println(b.encodeAsString(publicFromPrivate));
+        pbkf.print("-----END CRYPT4GH PUBLIC KEY-----");
+        pbkf.close();
+        
+        // TODO: Encrypted Private Key
+        
+    }
+    
     /*
      * just a test run: encrypting and decrypting a file with randomly generated key pairs
      */
