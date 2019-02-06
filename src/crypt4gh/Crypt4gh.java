@@ -37,6 +37,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintWriter;
+import java.io.UnsupportedEncodingException;
 
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
@@ -98,6 +99,7 @@ public class Crypt4gh {
         options.addOption("uk", "publickey", true, "public key file path");
         options.addOption("ukp", "publickeypass", true, "public key file passphrase");
         options.addOption("gk", "genkey", true, "generate a public/private key pair");
+        options.addOption("gkp", "genkeypass", true, "encrypt private key with this passphrase");
 
         options.addOption("t", "testme", false, "test the operations of the algorithm");
         
@@ -113,7 +115,11 @@ public class Crypt4gh {
             
             if (cmd.hasOption("gk")) {
                 String keyName = cmd.getOptionValue("gk");
-                genKeys(keyName);
+                String keyPassphrase = null;
+                if (cmd.hasOption("gkp")) {
+                    keyPassphrase = cmd.getOptionValue("gkp");
+                }
+                genKeys(keyName, keyPassphrase);
                 System.exit(1);                
             }
             
@@ -453,16 +459,23 @@ public class Crypt4gh {
      * 
      * Generate a .pub and a .sec file with keys.
      */
-    private static void genKeys(String keyName) throws InvalidKeyException, FileNotFoundException {
+    private static void genKeys(String keyName, String keyPassphrase) throws InvalidKeyException, FileNotFoundException, GeneralSecurityException, NoSuchAlgorithmException, InvalidKeySpecException, UnsupportedEncodingException {
         byte[] privateKey = generatePrivateKey();
         byte[] publicFromPrivate = publicFromPrivate(privateKey);
 
         Base64 b = new Base64();
         
         PrintWriter prkf = new PrintWriter(keyName.concat(".sec"));
-        prkf.println("-----BEGIN PRIVATE KEY-----");
-        prkf.println(b.encodeAsString(privateKey));
-        prkf.print("-----END PRIVATE KEY-----");
+        if (keyPassphrase == null) {
+            prkf.println("-----BEGIN PRIVATE KEY-----");
+            prkf.println(b.encodeAsString(privateKey));
+            prkf.print("-----END PRIVATE KEY-----");
+        } else {
+            prkf.println("-----BEGIN ENCRYPTED PRIVATE KEY-----");
+            PrivateKey pk = new PrivateKey(privateKey, keyPassphrase, false);
+            prkf.println(b.encodeAsString(pk.getKeyBytes()));
+            prkf.print("-----END ENCRYPTED PRIVATE KEY-----");
+        }
         prkf.close();
         
         PrintWriter pbkf = new PrintWriter(keyName.concat(".pub"));
