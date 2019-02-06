@@ -107,6 +107,13 @@ public class PrivateKey {
         pos = pos + 2;
         this.bEncData = new byte[iEd_l];
         System.arraycopy(input, pos, this.bEncData, 0, iEd_l);
+        pos = pos + iEd_l;
+        
+        int iC_l = getBigEndianShort(Arrays.copyOfRange(input, pos, pos+2)); 
+        pos = pos + 2;
+        if (iC_l > 0) {
+            this.comment = new String(Arrays.copyOf(input, pos));
+        }
         
         this.keyPhrase = keyPhrase;
     }
@@ -139,7 +146,8 @@ public class PrivateKey {
                   + 2 + this.kdfname.length() // Length encoding, crypt name
                   + 2 + 4 + this.bSalt.length // Length encoding, rounds (4), salt (16)
                   + 2 + this.ciphername.length() // Length encoding, 'chacha20_poly1305'
-                  + 2 + this.bEncData.length;        
+                  + 2 + this.bEncData.length // nonce || keyencrypted || MAC
+                  + 2 + (this.comment==null?0:this.comment.length());
         byte[] keyBytes = new byte[pkLen];
         
         int pos = 0;
@@ -174,7 +182,15 @@ public class PrivateKey {
         pos = pos + 2;
         System.arraycopy(this.bEncData, 0, keyBytes, pos, this.bEncData.length);
         pos = pos + this.bEncData.length;
-        
+
+        byte[] bC_l = shortToBigEndian( (new Integer( (this.comment==null?0:this.comment.length()) )).shortValue() );
+        System.arraycopy(bC_l, 0, keyBytes, pos, 2);
+        pos = pos + 2;
+        if (this.comment!=null) {
+            byte[] bC = this.comment.getBytes("US-ASCII");
+            System.arraycopy(bC, 0, keyBytes, pos, this.comment.length());            
+        }
+                
         return keyBytes;
     }
     

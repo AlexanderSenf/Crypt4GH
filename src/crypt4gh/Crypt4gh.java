@@ -483,9 +483,6 @@ public class Crypt4gh {
         pbkf.println(b.encodeAsString(publicFromPrivate));
         pbkf.print("-----END CRYPT4GH PUBLIC KEY-----");
         pbkf.close();
-        
-        // TODO: Encrypted Private Key
-        
     }
     
     /*
