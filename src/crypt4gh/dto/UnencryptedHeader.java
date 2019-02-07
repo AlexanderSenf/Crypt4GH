@@ -28,7 +28,7 @@ import java.util.Base64;
 public class UnencryptedHeader implements Serializable {
     private byte[] magicNumber = new byte[8];           // 'crypt4gh'
     private byte[] version = new byte[4];               // 1
-    private byte[] encryptedHeaderLength = new byte[4]; // length of the encrypted header (inc 28 byte nonce+MAC)
+    private byte[] encryptedHeaderLength = new byte[4]; // length of the remaining header (inc 28 byte nonce+MAC)
     private int headerMethod;                           // 0
     private byte[] publicKey = new byte[32];             // {public key bytes}
     

@@ -203,10 +203,9 @@ public class PrivateKey {
                                  loadFactor, 
                                  null, 
                                  32);
-        
         return pass;
     }
-    
+
     private int getBigEndianShort(byte[] bytes) {
         return java.nio.ByteBuffer.wrap(bytes).getShort();
     }

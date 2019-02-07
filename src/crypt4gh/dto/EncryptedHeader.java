@@ -52,8 +52,7 @@ public class EncryptedHeader implements Serializable {
     }
 
     private byte[] getBytes() {
-        int headerLength = 8; // 4-byte checksumType and 4-byte encryptionType
-        int checksumLength = 0;
+        int headerLength = 4; // 4-byte encryptionType
         
         int keyLength = 0;
         switch (encryptionMethod) {

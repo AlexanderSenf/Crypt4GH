@@ -102,6 +102,7 @@ public class Crypt4gh {
         options.addOption("gkp", "genkeypass", true, "encrypt private key with this passphrase");
 
         options.addOption("t", "testme", false, "test the operations of the algorithm");
+        options.addOption("tk", "testmekey", false, "test the operations of the algorithm");
         
         // Parse Command Line
         CommandLineParser parser = new DefaultParser();
@@ -110,6 +111,10 @@ public class Crypt4gh {
 
             if (cmd.hasOption("t")) {
                 testMe();
+                System.exit(1);                
+            }
+            if (cmd.hasOption("tk")) {
+                testMeKey();
                 System.exit(1);                
             }
             
@@ -242,9 +247,14 @@ public class Crypt4gh {
         
         // Generate Unencrypted Header
         byte[] ownPublicKey = publicFromPrivate(privateKey);
+        
+        // Get Remaining Length 
+        int remainingLength = encryptedHeaderBytes.length + 4 + ownPublicKey.length;
+        
+        // Generate Header object
         UnencryptedHeader unencryptedHeader = new UnencryptedHeader(MagicNumber, 
                                                                     Version,
-                                                                    encryptedHeaderBytes.length,
+                                                                    remainingLength,
                                                                     0,
                                                                     ownPublicKey);
         
@@ -307,7 +317,7 @@ public class Crypt4gh {
         
         // Read unencrypted file Header (validates Magic Number & Version)
         UnencryptedHeader unencryptedHeader = getUnencryptedHeader(in);
-        int encryptedHeaderLength = unencryptedHeader.getEncryptedHeaderLength();
+        int encryptedHeaderLength = unencryptedHeader.getEncryptedHeaderLength() - 4 - 32;
         
         // Obtain public key from header, unless specified
         if (publicKey==null) {
@@ -316,6 +326,8 @@ public class Crypt4gh {
         
         // Generate Curve25519 Shared Secret Key
         byte[] sharedKey = getSharedKey(privateKey, publicKey);
+Base64 b = new Base64();
+System.out.println(b.encodeToString(sharedKey));
         
         // Get and Decrypt Header
         byte[] encryptedBytes = new byte[encryptedHeaderLength];
@@ -536,4 +548,25 @@ public class Crypt4gh {
         
         
     }
+/*
+    private static void testMeKey() throws UnsupportedEncodingException  {
+        String key = "YzRnaC12MQAGYmNyeXB0ABQAAABk5vVvOnQKWJ/jpnQ3aRy3lwARY2hhY2hhMjBfcG9seTEzMDUAPHob63Kmmnf0vI0TYCSGpMIaNEKeEMcqVxb6ZfeDI3737OroVRS0FWh2GyvngMCEq7AGqp2UlT/oCp0sRQ==";
+        
+        Base64 decoder = new Base64();
+        byte[] decode = decoder.decode(key); //.substring(20));
+        PrivateKey pk = new PrivateKey(decode, "");
+
+        System.out.println();
+    }
+*/
+    private static void testMeKey() throws UnsupportedEncodingException  {
+        String key = "YzRnaC12MQAGYmNyeXB0ABQAAABk5vVvOnQKWJ/jpnQ3aRy3lwARY2hhY2hhMjBfcG9seTEzMDUAPHob63Kmmnf0vI0TYCSGpMIaNEKeEMcqVxb6ZfeDI3737OroVRS0FWh2GyvngMCEq7AGqp2UlT/oCp0sRQ==";
+        
+        Base64 decoder = new Base64();
+        byte[] decode = decoder.decode(key); //.substring(20));
+        PrivateKey pk = new PrivateKey(decode, "");
+
+        System.out.println();
+    }
+    
 }
