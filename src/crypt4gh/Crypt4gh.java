@@ -17,6 +17,7 @@ package crypt4gh;
 
 import com.google.crypto.tink.config.TinkConfig;
 import com.google.crypto.tink.subtle.ChaCha20Poly1305;
+import com.google.crypto.tink.subtle.Hex;
 import com.google.crypto.tink.subtle.X25519;
 import static com.google.crypto.tink.subtle.X25519.computeSharedSecret;
 import static com.google.crypto.tink.subtle.X25519.generatePrivateKey;
@@ -103,12 +104,19 @@ public class Crypt4gh {
 
         options.addOption("t", "testme", false, "test the operations of the algorithm");
         options.addOption("tk", "testmekey", false, "test the operations of the algorithm");
+
+        options.addOption("debug", "debug", false, "print debug information during encryption/decryption");
+        boolean debug = false;
         
         // Parse Command Line
         CommandLineParser parser = new DefaultParser();
         try {
             CommandLine cmd = parser.parse( options, args);
 
+            if (cmd.hasOption("debug")) {
+                debug = true;
+            }
+            
             if (cmd.hasOption("t")) {
                 testMe();
                 System.exit(1);                
@@ -192,9 +200,9 @@ public class Crypt4gh {
                 byte[] key = Glue.getInstance().GenerateRandomString(24, 48, 7, 7, 7, 3);
                 int encryptionType = 0;        
 
-                encrypt(inputPath, outputFilePath, encryptionType, key, privateKey, publicKey);
+                encrypt(inputPath, outputFilePath, encryptionType, key, privateKey, publicKey, debug);
             } else if (cmd.hasOption("d")) { // decrypt
-                decrypt(inputPath, outputFilePath, privateKey, publicKey);
+                decrypt(inputPath, outputFilePath, privateKey, publicKey, debug);
             } // ***************************************************************
             
         } catch (ParseException ex) {
@@ -221,23 +229,32 @@ public class Crypt4gh {
                                 int encryptionType,
                                 byte[] dataKey,
                                 byte[] privateKey,
-                                byte[] publicKey) throws IOException, 
-                                                           NoSuchAlgorithmException, 
-                                                           NoSuchPaddingException, 
-                                                           InvalidKeyException, 
-                                                           InvalidAlgorithmParameterException, 
-                                                           GeneralSecurityException  {        
+                                byte[] publicKey,
+                                boolean debug) throws IOException, 
+                                                      NoSuchAlgorithmException, 
+                                                      NoSuchPaddingException, 
+                                                      InvalidKeyException, 
+                                                      InvalidAlgorithmParameterException, 
+                                                      GeneralSecurityException  {        
         // Establish Output Stream
         OutputStream os = Files.newOutputStream(destination);
+        if (debug) System.out.println("Writing output to: " + destination);
 
         // Generate Curve25519 Shared Secret Key
         byte[] sharedKey = getSharedKey(privateKey, publicKey);
+        Base64 b = new Base64();
+        if (debug) {
+            System.out.println("Own Private Key:\t" + Hex.encode(privateKey) + "\t" + b.encodeToString(privateKey));
+            System.out.println("Target Public Key:\t" + Hex.encode(publicKey) + "\t" + b.encodeToString(publicKey));
+            System.out.println("Shared Key:\t" + Hex.encode(sharedKey) + "\t" + b.encodeToString(sharedKey));
+        }
         
         // Data Key: Id not specified, auto-generate a private key on the spot
         // [Or generate s shared key between two randomly generated keys]
         if ((dataKey == null) || (dataKey.length!=32)) {
             dataKey =  X25519.generatePrivateKey();
         }
+        if (debug) System.out.println("Data Key:\t" + Hex.encode(dataKey) + "\t" + b.encodeToString(dataKey));
         
         // Generate Encrypted Header and nonce and MAC
         //EncryptedHeader encryptedHeader = new EncryptedHeader(new byte[0], dataKey.getBytes());
@@ -289,6 +306,10 @@ public class Crypt4gh {
             
             // Encrypt
             byte[] encrypted = cipher.encrypt(to_enc, new byte[0]);
+            if (debug) {
+                byte[] nonce = Arrays.copyOfRange(encrypted, 0, 12);
+                System.out.println("Segment Nonce:\t" + Hex.encode(nonce) + "\t" + b.encodeToString(nonce));
+            } 
             
             // Write data to output stream
             os.write(encrypted);
@@ -305,15 +326,17 @@ public class Crypt4gh {
     private static void decrypt(Path source, 
                                 Path destination, 
                                 byte[] privateKey,
-                                byte[] publicKey) throws IOException, 
-                                                         NoSuchAlgorithmException, 
-                                                         NoSuchPaddingException, 
-                                                         InvalidKeyException, 
-                                                         InvalidAlgorithmParameterException, 
-                                                         GeneralSecurityException,
-                                                         Exception  {
+                                byte[] publicKey,
+                                boolean debug) throws IOException, 
+                                                      NoSuchAlgorithmException, 
+                                                      NoSuchPaddingException, 
+                                                      InvalidKeyException, 
+                                                      InvalidAlgorithmParameterException, 
+                                                      GeneralSecurityException,
+                                                      Exception  {
         // Get Input Stream
         InputStream in = Files.newInputStream(source);
+        if (debug) System.out.println("Input Path: " + source);
         
         // Read unencrypted file Header (validates Magic Number & Version)
         UnencryptedHeader unencryptedHeader = getUnencryptedHeader(in);
@@ -323,11 +346,15 @@ public class Crypt4gh {
         if (publicKey==null) {
             publicKey = unencryptedHeader.getPublicKeyBytes();
         }
+        Base64 b = new Base64();
+        if (debug) System.out.println("Encrypter Public Key:\t" + Hex.encode(publicKey) + "\t" + b.encodeAsString(publicKey));
         
         // Generate Curve25519 Shared Secret Key
         byte[] sharedKey = getSharedKey(privateKey, publicKey);
-Base64 b = new Base64();
-System.out.println(b.encodeToString(sharedKey));
+        if (debug) {
+            System.out.println("My Private Key:\t" + Hex.encode(privateKey) + "\t" + b.encodeAsString(privateKey));
+            System.out.println("Shared Key:\t" + Hex.encode(sharedKey) + "\t" + b.encodeAsString(sharedKey));            
+        }
         
         // Get and Decrypt Header
         byte[] encryptedBytes = new byte[encryptedHeaderLength];
@@ -351,6 +378,10 @@ System.out.println(b.encodeToString(sharedKey));
         int seg_len = in.read(segment);
         while (seg_len > 0) {
             byte[] sub_seg = Arrays.copyOfRange(segment, 0, seg_len);
+            if (debug) {
+                byte[] nonce = Arrays.copyOfRange(sub_seg, 0, 12);
+                System.out.println("Segment Nonce:\t" + Hex.encode(nonce) + "\t" + b.encodeToString(nonce));
+            }
             
             // Get next segment
             seg_len = in.read(segment);
@@ -532,7 +563,8 @@ System.out.println(b.encodeToString(sharedKey));
                 0,
                 dataKey,
                 privateKey_party1,
-                publicFromPrivate_party2);
+                publicFromPrivate_party2,
+                true);
         
         // This should have generted the encrypted file..
         System.out.println();
@@ -541,7 +573,8 @@ System.out.println(b.encodeToString(sharedKey));
         decrypt(tempFile2.toPath(), 
                 tempFile3.toPath(), 
                 privateKey_party2,
-                publicFromPrivate_party1);
+                publicFromPrivate_party1,
+                true);
         
         // The file should be decrypted...
         System.out.println();
@@ -560,6 +593,24 @@ System.out.println(b.encodeToString(sharedKey));
     }
 */
     private static void testMeKey() throws UnsupportedEncodingException  {
+        String a = "P+kXQCq57aGiJ7qDJTdZxx94xZrlt3EjglXbv8Dm5o8="; // my private
+        String b = "Xy8yxfdzDZx1t81PHApVVeF6aoToiRB8BDnf2oWiURk=";
+//        String b = "VrgNY5ElJg4iXzNoQ3RgloD8AtFZBT0dPevQ+zVt3HY="; // recipient public
+        
+        //String a = "pw3/NpM8YmJcpttrPsVYFNnyBmTT6ydErPx3tz7zB60="; // my private
+        //String b = "K4oDnIgI+soyYTqYTXvnqP3Yb/JrGgNEF5Ok7JXfpxg="; // recipient public
+        
+        Base64 c = new Base64();
+        try {
+            byte[] shared = getSharedKey(c.decode(a), c.decode(b));
+            
+            String d = c.encodeAsString(shared);
+            System.out.println(d);
+            
+        } catch (InvalidKeyException ex) {
+            Logger.getLogger(Crypt4gh.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        
         String key = "YzRnaC12MQAGYmNyeXB0ABQAAABk5vVvOnQKWJ/jpnQ3aRy3lwARY2hhY2hhMjBfcG9seTEzMDUAPHob63Kmmnf0vI0TYCSGpMIaNEKeEMcqVxb6ZfeDI3737OroVRS0FWh2GyvngMCEq7AGqp2UlT/oCp0sRQ==";
         
         Base64 decoder = new Base64();
