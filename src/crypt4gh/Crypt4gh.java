@@ -22,6 +22,8 @@ import com.google.crypto.tink.subtle.X25519;
 import static com.google.crypto.tink.subtle.X25519.computeSharedSecret;
 import static com.google.crypto.tink.subtle.X25519.generatePrivateKey;
 import static com.google.crypto.tink.subtle.X25519.publicFromPrivate;
+import com.rfksystems.blake2b.Blake2b;
+import com.rfksystems.blake2b.security.Blake2bProvider;
 
 import crypt4gh.dto.EncryptedHeader;
 import crypt4gh.dto.PrivateKey;
@@ -48,8 +50,10 @@ import java.nio.file.Paths;
 import java.security.GeneralSecurityException;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
+import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
+import java.security.Security;
 import java.security.spec.InvalidKeySpecException;
 import java.util.Arrays;
 
@@ -118,7 +122,7 @@ public class Crypt4gh {
             }
             
             if (cmd.hasOption("t")) {
-                testMe();
+                testMe(debug);
                 System.exit(1);                
             }
             if (cmd.hasOption("tk")) {
@@ -228,8 +232,8 @@ public class Crypt4gh {
                                 Path destination, 
                                 int encryptionType,
                                 byte[] dataKey,
-                                byte[] privateKey,
-                                byte[] publicKey,
+                                byte[] privateKey, // My Private
+                                byte[] publicKey,  // Other Public
                                 boolean debug) throws IOException, 
                                                       NoSuchAlgorithmException, 
                                                       NoSuchPaddingException, 
@@ -240,12 +244,18 @@ public class Crypt4gh {
         OutputStream os = Files.newOutputStream(destination);
         if (debug) System.out.println("Writing output to: " + destination);
 
+        // Generate Unencrypted Header
+        byte[] ownPublicKey = publicFromPrivate(privateKey);
+        
         // Generate Curve25519 Shared Secret Key
-        byte[] sharedKey = getSharedKey(privateKey, publicKey);
+        byte[] sharedKey_forBlake2b = getSharedKey(privateKey, publicKey);
+        byte[] sharedKey = Blake2B_512(sharedKey_forBlake2b, publicKey, ownPublicKey, debug );
         Base64 b = new Base64();
         if (debug) {
             System.out.println("Own Private Key:\t" + Hex.encode(privateKey) + "\t" + b.encodeToString(privateKey));
+            System.out.println("Own Public Key:\t" + Hex.encode(X25519.publicFromPrivate(privateKey)) + "\t" + b.encodeToString(X25519.publicFromPrivate(privateKey)));
             System.out.println("Target Public Key:\t" + Hex.encode(publicKey) + "\t" + b.encodeToString(publicKey));
+            System.out.println("Pre Shared Key:\t" + Hex.encode(sharedKey_forBlake2b) + "\t" + b.encodeAsString(sharedKey_forBlake2b));            
             System.out.println("Shared Key:\t" + Hex.encode(sharedKey) + "\t" + b.encodeToString(sharedKey));
         }
         
@@ -261,9 +271,6 @@ public class Crypt4gh {
         EncryptedHeader encryptedHeader = new EncryptedHeader(encryptionType,
                                                               dataKey);
         byte[] encryptedHeaderBytes = encryptedHeader.getEncryptedHeader(sharedKey);
-        
-        // Generate Unencrypted Header
-        byte[] ownPublicKey = publicFromPrivate(privateKey);
         
         // Get Remaining Length 
         int remainingLength = encryptedHeaderBytes.length + 4 + ownPublicKey.length;
@@ -325,8 +332,8 @@ public class Crypt4gh {
      */
     private static void decrypt(Path source, 
                                 Path destination, 
-                                byte[] privateKey,
-                                byte[] publicKey,
+                                byte[] privateKey, // My Private
+                                byte[] publicKey,  // Other Public
                                 boolean debug) throws IOException, 
                                                       NoSuchAlgorithmException, 
                                                       NoSuchPaddingException, 
@@ -350,9 +357,14 @@ public class Crypt4gh {
         if (debug) System.out.println("Encrypter Public Key:\t" + Hex.encode(publicKey) + "\t" + b.encodeAsString(publicKey));
         
         // Generate Curve25519 Shared Secret Key
-        byte[] sharedKey = getSharedKey(privateKey, publicKey);
+        byte[] sharedKey_forBlake2b = getSharedKey(privateKey, publicKey);
+        //byte[] sharedKey = Blake2B_512(sharedKey_forBlake2b, publicKey, X25519.publicFromPrivate(privateKey) );
+        byte[] sharedKey = Blake2B_512(sharedKey_forBlake2b, X25519.publicFromPrivate(privateKey), publicKey, debug );
         if (debug) {
             System.out.println("My Private Key:\t" + Hex.encode(privateKey) + "\t" + b.encodeAsString(privateKey));
+            System.out.println("My Public Key:\t" + Hex.encode(X25519.publicFromPrivate(privateKey)) + "\t" + b.encodeToString(X25519.publicFromPrivate(privateKey)));
+            System.out.println("Other Public Key:\t" + Hex.encode(publicKey) + "\t" + b.encodeToString(publicKey));
+            System.out.println("Pre Shared Key:\t" + Hex.encode(sharedKey_forBlake2b) + "\t" + b.encodeAsString(sharedKey_forBlake2b));            
             System.out.println("Shared Key:\t" + Hex.encode(sharedKey) + "\t" + b.encodeAsString(sharedKey));            
         }
         
@@ -515,7 +527,7 @@ public class Crypt4gh {
             prkf.print("-----END PRIVATE KEY-----");
         } else {
             prkf.println("-----BEGIN ENCRYPTED PRIVATE KEY-----");
-            PrivateKey pk = new PrivateKey(privateKey, keyPassphrase, false);
+            PrivateKey pk = new PrivateKey(privateKey, keyPassphrase, "bcrypt");
             prkf.println(b.encodeAsString(pk.getKeyBytes()));
             prkf.print("-----END ENCRYPTED PRIVATE KEY-----");
         }
@@ -529,9 +541,33 @@ public class Crypt4gh {
     }
     
     /*
+     * Hashing function to derive the actual shared key after X25519 multiplication
+     */
+    private static byte[] Blake2B_512(byte[] k_sharedKey, 
+                                      byte[] otherPublicKey, 
+                                      byte[] myPublicKey,
+                                      boolean debug) throws NoSuchAlgorithmException {
+        Security.addProvider(new Blake2bProvider());    
+        
+        byte[] combined = new byte[96];
+        System.arraycopy(k_sharedKey, 0, combined, 0, 32);
+        System.arraycopy(otherPublicKey, 0, combined, 32, 32);
+        System.arraycopy(myPublicKey, 0, combined, 64, 32);
+        
+        byte[] digest = MessageDigest.getInstance(Blake2b.BLAKE2_B_512).digest(combined);
+
+        if (debug) {
+            System.out.println("Blake2b 1st 32 bytes: " + Hex.encode(Arrays.copyOfRange(digest, 0, 32)));
+            System.out.println("Blake2b 2nd 32 bytes: " + Hex.encode(Arrays.copyOfRange(digest, 32, 64)));
+        }
+        
+        return Arrays.copyOfRange(digest, 0, 32);
+    }
+    
+    /*
      * just a test run: encrypting and decrypting a file with randomly generated key pairs
      */
-    private static void testMe() throws GeneralSecurityException, IOException, NoSuchPaddingException, InvalidKeyException, InvalidAlgorithmParameterException, Exception {
+    private static void testMe(boolean debug) throws GeneralSecurityException, IOException, NoSuchPaddingException, InvalidKeyException, InvalidAlgorithmParameterException, Exception {
         // Party 1 (Encrypter), Party 2 (Recipient)
         byte[] privateKey_party1 = generatePrivateKey();
         byte[] publicFromPrivate_party1 = publicFromPrivate(privateKey_party1);
@@ -564,7 +600,7 @@ public class Crypt4gh {
                 dataKey,
                 privateKey_party1,
                 publicFromPrivate_party2,
-                true);
+                debug);
         
         // This should have generted the encrypted file..
         System.out.println();
@@ -574,7 +610,7 @@ public class Crypt4gh {
                 tempFile3.toPath(), 
                 privateKey_party2,
                 publicFromPrivate_party1,
-                true);
+                debug);
         
         // The file should be decrypted...
         System.out.println();

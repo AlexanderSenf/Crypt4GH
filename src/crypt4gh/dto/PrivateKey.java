@@ -19,6 +19,8 @@ import at.favre.lib.crypto.bkdf.KeyDerivationFunction;
 import at.favre.lib.crypto.bkdf.Version;
 import com.google.crypto.tink.config.TinkConfig;
 import com.google.crypto.tink.subtle.ChaCha20Poly1305;
+import com.lambdaworks.crypto.SCrypt;
+import com.lambdaworks.crypto.SCryptUtil;
 import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -34,7 +36,7 @@ import java.util.Arrays;
  */
 public class PrivateKey {
     private byte[]  MAGIC_WORD = new byte[7]; // 'c4gh-v1'
-    private String  kdfname;
+    private String  kdfname; // bcrypt, scrypt
     private int  rounds; // || salt
     private byte[] bSalt = new byte[16];
     private String  ciphername; // chacha20_poly1305
@@ -44,12 +46,15 @@ public class PrivateKey {
     private String keyPhrase; 
     
     // generate Key from with given passphrase (using many defaults, for now)
-    public PrivateKey(byte[] key, String keyPhrase, boolean v) throws GeneralSecurityException, NoSuchAlgorithmException, InvalidKeySpecException, UnsupportedEncodingException {
+    public PrivateKey(byte[] key, String keyPhrase, String alg) throws GeneralSecurityException, 
+                                                                       NoSuchAlgorithmException, 
+                                                                       InvalidKeySpecException, 
+                                                                       UnsupportedEncodingException {
         // Version 1
         this.MAGIC_WORD = "c4gh-v1".getBytes();
         
         // use bcrypt, for now
-        this.kdfname = "bcrypt";
+        this.kdfname = alg; // bcrypt or scrypt
         
         // set to load factor 7: 128 rounds
         this.rounds = 128;
@@ -194,8 +199,20 @@ public class PrivateKey {
         return keyBytes;
     }
     
+    private byte[] getPass() throws NoSuchAlgorithmException, 
+                                    InvalidKeySpecException, 
+                                    UnsupportedEncodingException, 
+                                    GeneralSecurityException {
+        if (this.kdfname.equalsIgnoreCase("bcrypt")) {
+            return getPassBcrypt();
+        } else if (this.kdfname.equalsIgnoreCase("scrypt")) {
+            return getPassScrypt();
+        }
+        
+        return null;
+    }
     // Derive key from input data (bcrypt key derivation function)
-    private byte[] getPass() throws NoSuchAlgorithmException, InvalidKeySpecException, UnsupportedEncodingException {
+    private byte[] getPassBcrypt() throws NoSuchAlgorithmException, InvalidKeySpecException, UnsupportedEncodingException {
         KeyDerivationFunction kdf = new KeyDerivationFunction.Default(Version.DEFAULT_VERSION);        
         int loadFactor = (int) ( Math.log(rounds) / Math.log(2) );
         byte[] pass = kdf.derive(this.bSalt, 
@@ -205,7 +222,13 @@ public class PrivateKey {
                                  32);
         return pass;
     }
-
+    private byte[] getPassScrypt() throws GeneralSecurityException, UnsupportedEncodingException {
+        int N = 65536; // CPU cost parameter. (rounds)
+        int r = 16; // Memory cost parameter.
+        int p = 1; // Parallelization parameter.
+        return SCrypt.scrypt(this.keyPhrase.getBytes("UTF-8"), this.bSalt, this.rounds, r, p, 32);
+    }
+    
     private int getBigEndianShort(byte[] bytes) {
         return java.nio.ByteBuffer.wrap(bytes).getShort();
     }
